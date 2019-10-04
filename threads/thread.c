@@ -18,28 +18,41 @@ struct wait_queue {
 
 /* This is the thread control block */
 typedef struct thread {
-	/* ... Fill this in ... */
-	Tid id;
-	ucontext_t threadContext;
-	int state;
-	void * sp;
-	struct thread * nextThread;
+	Tid id;	//id of the thread
+	ucontext_t threadContext; //thread context of the thread
+	//int state; //keeps track of the state of thread
+	void * sp; //pointer to dynamically allocated stack pointer
+	struct thread * nextThread;	//pointer to next thread in queue (linked list)
 } Thread;
 
 //function declaration
 void thread_stub(void (*thread_main)(void *), void *arg);
+//obtains the next possible id for the next thread
 Tid get_id();
+//inserts a thread into the ready linked list queue
 void insertReady(Thread * insert);
+//inserts a thread into the murdered linked list queue
 void insertMurdered(Thread * insert);
+//removes the thread with same id from ready queue linked list and returns a pointer to the one that has been removed. returns null otherwise
 Thread * removeReady(Tid id);
+//returns a pointer to thread in the murder queue that has the same id
 Thread * murderedExists(Tid id);
+//prints the ready queue linked list
+void printReadyQ();
+//incinerate and dispose of murdered threads
 void exterminate();
 
 //globals
+//pointer to the head of ready linked list
 Thread * readyHead = NULL;
+//pointer to current running thread
 Thread * runningThread = NULL;
+//pointer to the head of murdered linked list
 Thread * murderedHead = NULL;
+//array of ids for threads. makes sure each id is unique
 int tidTracker[THREAD_MAX_THREADS];
+//flag makes sure get and set context does not loop inside thread_yeild function
+volatile int flag = 0;
 
 /* thread starts by calling thread_stub. The arguments to thread_stub are the
  * thread_main() function, and one argument to the thread_main() function. */
@@ -128,7 +141,7 @@ Thread * murderedExists(Tid id){
 	return NULL;
 }
 
-void printQ(){
+void printReadyQ(){
 	Thread * ptr = readyHead;
 	while (ptr != NULL){
 		printf("%d -> ", ptr->id);
@@ -168,7 +181,7 @@ thread_init(void)
 	mainThread->id = get_id();
 	tidTracker[mainThread->id] = 1;
 	mainThread->nextThread = NULL;
-	mainThread->state = READY;
+	//mainThread->state = READY;
 	mainThread->sp = NULL;
 	runningThread = mainThread;
 }
@@ -176,7 +189,6 @@ thread_init(void)
 Tid
 thread_id()
 {
-	//printf("thread_id\n");
 	if (runningThread != NULL){
 		return runningThread->id;
 	}
@@ -186,7 +198,6 @@ thread_id()
 Tid
 thread_create(void (*fn) (void *), void *parg)
 {
-	//printf("creating\n");
 	Thread * newThread = (Thread *)malloc(sizeof(Thread));
 	if (newThread == NULL){
 		free(newThread);
@@ -197,10 +208,9 @@ thread_create(void (*fn) (void *), void *parg)
 		return THREAD_NOMORE;
 	}
 	newThread->id = get_id();
-	//printf("created thread id is %d\n", newThread->id);
 	tidTracker[newThread->id] = 1;
 	newThread->nextThread = NULL;
-	newThread->state = READY;
+	//newThread->state = READY;
 	newThread->sp = (void *)malloc(THREAD_MIN_STACK);
 	if (newThread->sp == NULL){
 		free(newThread->sp);
@@ -219,53 +229,39 @@ thread_create(void (*fn) (void *), void *parg)
 	insertReady(newThread);
 	return newThread->id;
 }
-int cnt = 0;
-
-volatile int flag = 0;
 
 Tid
 thread_yield(Tid want_tid)
 {
-	cnt++;
-	//volatile int flag;
-	//flag = 0;
-	
-	//printf("wantid = %d\n", want_tid);
 	if (want_tid == THREAD_ANY) {
-		
-		//printf("%d want_tid == THREAD_ANY\n", cnt);
 		if (readyHead == NULL){
 			return THREAD_NONE;
 		}
-		int temp;
+		int runningThreadID;
 		getcontext(&runningThread->threadContext);
 		if(flag == 0){
 			flag = 1;
 			insertReady(runningThread);
 			Thread * head = removeReady(readyHead->id);
 			runningThread = head;
-			temp = runningThread->id;
+			runningThreadID = runningThread->id;
 			setcontext(&head->threadContext);
 		}
 		flag = 0;
-		return temp;
+		return runningThreadID;
 	}
 	else if (want_tid == THREAD_SELF || runningThread->id == want_tid) {
-		
-		//printf("%d want_tid == THREAD_SELF\n", cnt);
-		int temp;
+		int runningThreadID;
 		getcontext(&runningThread->threadContext);
 		if(flag == 0){
 			flag = 1;
-			temp = runningThread->id;
+			runningThreadID = runningThread->id;
 			setcontext(&runningThread->threadContext);
 		}
 		flag = 0;
-		return temp;
+		return runningThreadID;
 	}
 	else if (want_tid < THREAD_MAX_THREADS && want_tid >= 0){
-		//printf("%d want_tid(%d) < THREAD_MAX_THREADS-1 && want_tid >= 0\n", cnt, want_tid);
-		//printf("running trhread %d\n", runningThread->id);
 		Thread * ptr = murderedExists(want_tid);
 		if(ptr != NULL){
 			exterminate();
@@ -273,18 +269,18 @@ thread_yield(Tid want_tid)
 		if (tidTracker[want_tid] == 0){
 			return THREAD_INVALID;
 		}
-		int temp;
+		int runningThreadID;
 		getcontext(&runningThread->threadContext);
 		if(flag == 0){
 			flag = 1;
 			insertReady(runningThread);
 			ptr = removeReady(want_tid);
 			runningThread = ptr;
-			temp = runningThread->id;
+			runningThreadID = runningThread->id;
 			setcontext(&runningThread->threadContext);
 		}
 		flag = 0;
-		return temp;
+		return runningThreadID;
 	}
 	else {
 		return THREAD_INVALID;
@@ -301,7 +297,7 @@ thread_exit()
 		runningThread = NULL;
 		exit(0);
 	}
-	runningThread->state = MURDERED;
+	//runningThread->state = MURDERED;
 	tidTracker[runningThread->id] = 0;
 	insertMurdered(runningThread);
 	Thread * head = removeReady(readyHead->id);
@@ -320,7 +316,7 @@ thread_kill(Tid tid)
 	if (ptr == NULL){
 		return THREAD_INVALID;
 	}
-	ptr->state = MURDERED;
+	//ptr->state = MURDERED;
 	tidTracker[ptr->id] = 0;
 	insertMurdered(ptr);
 	return ptr->id;
