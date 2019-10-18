@@ -7,6 +7,7 @@
  
 #define READY 0
 #define MURDERED 1
+#define ASLEEP 2
  
 /* This is the thread control block */
 typedef struct thread {
@@ -38,8 +39,10 @@ Thread * removeReady(Tid id);
 void printReadyQ();
 //incinerate and dispose of murdered threads
 void exterminate();
- 
+//inserts a thread into the corresponding wait queue
 void insertWQ(Thread * insert, WQ * q);
+//prints a wait queue;
+void printWQ(WQ * queue);
  
 //globals
 //pointer to the head of ready linked list
@@ -50,9 +53,10 @@ Thread * runningThread = NULL;
 Thread * murderedHead = NULL;
 //array of threads in accordance with their id
 Thread * threadTracker[THREAD_MAX_THREADS];
-Thread * wq[THREAD_MAX_THREADS];
+//array of wait queues according to their thread id
+WQ wq[THREAD_MAX_THREADS];
 //flag makes sure get and set context does not loop inside thread_yeild function
-volatile int flag = 0;
+int flag = 0;
 
 /* thread starts by calling thread_stub. The arguments to thread_stub are the
  * thread_main() function, and one argument to the thread_main() function. */
@@ -64,7 +68,6 @@ thread_stub(void (*thread_main)(void *), void *arg)
  
     thread_main(arg); // call thread_main() function with arg
     thread_exit();
-    interrupts_on();
 }
 
 Tid get_id(){
@@ -129,40 +132,27 @@ Thread * removeReady(Tid id){
 	return NULL;
 }
 
-Thread * murderedExists(Tid id){
-	if (murderedHead == NULL){
-		return NULL;
-	}
-	Thread * ptr = murderedHead;
-	while (ptr != NULL){
-		if (ptr->id == id){
-			return ptr;
-		}
-		ptr = ptr->nextThread;
-	}
-	return NULL;
-}
-
 void printReadyQ(){
 	Thread * ptr = readyHead;
+    printf("rq:\n");
 	while (ptr != NULL){
 		printf("%d -> ", ptr->id);
-		if (ptr->nextThread == NULL){
-			return;
-		}
-		
 		ptr = ptr->nextThread;
 	}
+    printf("\n");
 }
 
 void exterminate(){
     Thread * ptr = murderedHead;
-    Thread * next = murderedHead;
+    Thread * next;
     while (ptr != NULL){
         next = ptr->nextThread;
+        
+        threadTracker[ptr->id] = NULL;
         free(ptr->sp);
         ptr->sp = NULL;
-        wait_queue_destroy(ptr->wq);
+        ptr->wq->waitHead = NULL;
+        ptr->wq->size = 0;
         ptr->wq = NULL;
         free(ptr);
         ptr = next;
@@ -180,54 +170,57 @@ thread_init(void)
  
     for(int i=0; i< THREAD_MAX_THREADS; i++){
         threadTracker[i] = NULL;
-        wq[i] = NULL;
     }
  
-    mainThread->id = get_id();
-    threadTracker[mainThread->id] = mainThread;
+    mainThread->id = 0;
+    threadTracker[0] = mainThread;
     mainThread->nextThread = NULL;
     mainThread->state = READY;
     mainThread->sp = NULL;
-    mainThread->wq = wait_queue_create();
+    mainThread->wq = &wq[0];
+    mainThread->wq->size = 0;
+    mainThread->wq->waitHead = NULL;
     runningThread = mainThread;
 }
 
 Tid
 thread_id()
 {
-    interrupts_off();
+    int enabled = interrupts_off();
     if (runningThread != NULL){
-        interrupts_on();
+        interrupts_set(enabled);
         return runningThread->id;
     }
-    interrupts_on();
+    interrupts_set(enabled);
     return THREAD_INVALID;
 }
 
 Tid
 thread_create(void (*fn) (void *), void *parg)
 {
-    interrupts_off();
+    int enabled = interrupts_off();
     Thread * newThread = (Thread *)malloc(sizeof(Thread));
     if (newThread == NULL){
         free(newThread);
-        interrupts_on();
+        interrupts_set(enabled);
         return THREAD_NOMEMORY;
     }
     if (get_id() == THREAD_NOMORE){
         free(newThread);
-        interrupts_on();
+        interrupts_set(enabled);
         return THREAD_NOMORE;
     }
     newThread->id = get_id();
     threadTracker[newThread->id] = newThread;
     newThread->nextThread = NULL;
     newThread->state = READY;
-    newThread->wq = wait_queue_create();
+    newThread->wq = &wq[newThread->id];
+    newThread->wq->waitHead = NULL;
+    newThread->wq->size = 0;
     newThread->sp = (void *)malloc(THREAD_MIN_STACK);
     if (newThread->sp == NULL){
         free(newThread->sp);
-        interrupts_on();
+        interrupts_set(enabled);
         return THREAD_NOMEMORY;
     }
     getcontext(&newThread->threadContext);
@@ -241,119 +234,119 @@ thread_create(void (*fn) (void *), void *parg)
     newThread->threadContext.uc_mcontext.gregs[REG_RIP] = (unsigned long) &thread_stub;
  
     insertReady(newThread);
-    interrupts_on();
+    interrupts_set(enabled);
     return newThread->id;
 }
 
 Tid
 thread_yield(Tid want_tid)
 {
-	interrupts_off();
+	int enabled = interrupts_off();
+    exterminate();
 	if (want_tid == THREAD_ANY) {
 		if (readyHead == NULL){
-			interrupts_on();
+			interrupts_set(enabled);
 			return THREAD_NONE;
-		}
-		int runningThreadID;
-		getcontext(&runningThread->threadContext);
-		if(flag == 0){
-			flag = 1;
-			insertReady(runningThread);
-			runningThread = removeReady(readyHead->id);
-			runningThreadID = runningThread->id;
-			setcontext(&runningThread->threadContext);
-		}
-		flag = 0;
-		interrupts_on();
-		return runningThreadID;
+		}        
+        Thread * head = removeReady(readyHead->id);
+        int runningThreadID = head->id;
+        insertReady(runningThread);
+        flag = 0;
+        getcontext(&runningThread->threadContext);
+        if (runningThread->state == MURDERED){
+            thread_exit();
+        }
+        if (flag == 0){
+            flag = 1;
+            runningThread = head;
+            setcontext(&head->threadContext);
+        }
+        interrupts_set(enabled);
+        return runningThreadID;
 	}
 	else if (want_tid == THREAD_SELF || runningThread->id == want_tid) {
-		int runningThreadID;
 		getcontext(&runningThread->threadContext);
 		if(flag == 0){
 			flag = 1;
-			runningThreadID = runningThread->id;
 			setcontext(&runningThread->threadContext);
 		}
-		flag = 0;
-		interrupts_on();
-		return runningThreadID;
+		interrupts_set(enabled);
+		return runningThread->id;
 	}
 	else if (want_tid < THREAD_MAX_THREADS && want_tid >= 0){
-		Thread * ptr = murderedExists(want_tid);
-		if(ptr != NULL){
-			exterminate();
-		}
 		if (threadTracker[want_tid] == NULL){
-			interrupts_on();
+			interrupts_set(enabled);
 			return THREAD_INVALID;
 		}
-		int runningThreadID;
-		getcontext(&runningThread->threadContext);
-		if(flag == 0){
-			flag = 1;
-			insertReady(runningThread);
-			runningThread = removeReady(want_tid);
-			runningThreadID = runningThread->id;
-			setcontext(&runningThread->threadContext);
-		}
-		flag = 0;
-		interrupts_on();
-		return runningThreadID;
+        Thread * foundThread = removeReady(want_tid);
+        int runningThreadID = foundThread->id;
+        insertReady(runningThread);
+        flag = 0;
+        getcontext(&runningThread->threadContext);
+        if (runningThread->state == MURDERED){
+            thread_exit();
+        }
+        if (flag == 0){
+            flag = 1;
+            runningThread = foundThread;
+            setcontext(&foundThread->threadContext);
+        }
+        interrupts_set(enabled);
+        return runningThreadID;
+
 	}
-	else {
-		interrupts_on();
-		return THREAD_INVALID;
-	}
+    interrupts_set(enabled);
+    return THREAD_INVALID;
 }
 
 void
 thread_exit()
 {
-	interrupts_off();
-    thread_wakeup(runningThread->wq, 1);
-	runningThread->state = MURDERED;
-	threadTracker[runningThread->id] = NULL;
+	int enabled = interrupts_off();
+    thread_wakeup(&wq[runningThread->id], 1);
 	if (readyHead == NULL){
 		exterminate();
-		free (runningThread->sp);
-		wait_queue_destroy(runningThread->wq);
+        threadTracker[runningThread->id] = NULL;
+        runningThread->wq->waitHead = NULL;
+        runningThread->wq->size = 0;
+        runningThread->wq = NULL;
 		free(runningThread);
 		runningThread = NULL;
-		interrupts_on();
+		interrupts_set(enabled);
 		exit(0);
 	}
+    Thread * nextThread = removeReady(readyHead->id);
+    threadTracker[runningThread->id] = NULL;
 	insertMurdered(runningThread);
-	runningThread = removeReady(readyHead->id);
+	runningThread = nextThread;
 	setcontext(&runningThread->threadContext);	
-	interrupts_on();
+	interrupts_set(enabled);
 }    
 
 Tid
 thread_kill(Tid tid)
 {
-    interrupts_off();
+    int enabled = interrupts_off();
     if (tid == runningThread->id || tid >= THREAD_MAX_THREADS || tid < 0 || threadTracker[tid] == NULL){
-        interrupts_on();
+        interrupts_set(enabled);
         return THREAD_INVALID;
     }
+    threadTracker[tid]->state = MURDERED;
     Thread * ptr = removeReady(tid);
     if (ptr == NULL){
         if (threadTracker[tid] != NULL){
             threadTracker[tid]->state = MURDERED;
-            interrupts_on();
+            threadTracker[tid]->threadContext.uc_mcontext.gregs[REG_RIP] = (unsigned long) &thread_exit;
+            interrupts_set(enabled);
             return tid;
         }
-        interrupts_on();
+        interrupts_set(enabled);
         return THREAD_INVALID;
     }
-    ptr->state = MURDERED;
-    threadTracker[ptr->id] = NULL;
 	insertMurdered(ptr);
-    interrupts_on();
+    interrupts_set(enabled);
     return ptr->id;
 }
-
 
 /*******************************************************************
  * Important: The rest of the code should be implemented in Lab 3. *
@@ -361,7 +354,7 @@ thread_kill(Tid tid)
 
 /* make sure to fill the wait_queue structure defined above */
 void insertWQ(Thread * insert, WQ * queue){
-    queue->size += 1;
+    queue->size = queue->size + 1;
     if (queue->waitHead == NULL){
         queue->waitHead = insert;
         return;
@@ -373,17 +366,27 @@ void insertWQ(Thread * insert, WQ * queue){
 	ptr->nextThread = insert;
 }
  
+void printWQ(WQ * queue){
+	Thread * ptr = queue->waitHead;
+    printf("wq:\n");
+	while (ptr != NULL){
+		printf("%d -> ", ptr->id);		
+		ptr = ptr->nextThread;
+	}
+    printf("\n");
+}
+
 struct wait_queue *
 wait_queue_create()
 {
-    WQ *wq;
- 
-    wq = malloc(sizeof(WQ));
+    WQ * wq;
+
+    wq = malloc(sizeof (WQ));
     assert(wq);
- 
-    wq->size = 0;
+
     wq->waitHead = NULL;
- 
+    wq->size = 0;
+
     return wq;
 }
  
@@ -392,50 +395,51 @@ wait_queue_destroy(struct wait_queue *wq)
 {
     if (wq->waitHead == NULL){
         free(wq);
-        wq = NULL;
         return;
     }
-    Thread * ptr = wq->waitHead;
-    Thread * next = wq->waitHead;
-    while (ptr != NULL){
-        next = ptr->nextThread;
-        free(ptr->sp);
-        ptr->sp = NULL;
-        wait_queue_destroy(ptr->wq);
-        ptr->wq = NULL;
-        free(ptr);
-        ptr = next;
-    }
-    ptr = NULL;
-    next = NULL;
+    thread_wakeup(wq, 1);
+    free(wq);
+    return;
 }
  
 Tid
 thread_sleep(struct wait_queue *queue)
 {
-    interrupts_off();
+    int enabled = interrupts_off();
+    exterminate();
     if (queue == NULL){
-        interrupts_on();
+        interrupts_set(enabled);
         return THREAD_INVALID;
     }
     else if (readyHead == NULL){
-        interrupts_on();
+        interrupts_set(enabled);
         return THREAD_NONE;
     }
     else {
+        
         int runningThreadID;
+        Thread * head = removeReady(readyHead->id);
+        runningThreadID = head->id;
+        insertWQ(runningThread, queue);
+        flag = 0;
         getcontext(&runningThread->threadContext);
+        if (runningThread->state == MURDERED){
+            thread_exit();
+        }
+        if (threadTracker[runningThreadID] == NULL){
+            interrupts_set(enabled);
+            return runningThreadID;
+        }
         if (flag == 0){
             flag = 1;
-            runningThreadID = runningThread->id;
-            insertWQ(runningThread, queue);
-            runningThread = removeReady(readyHead->id);
-            setcontext(&runningThread->threadContext);
+            runningThread = head;
+            setcontext(&head->threadContext);
         }
-        flag = 0;
-        interrupts_on();
+        interrupts_set(enabled);
         return runningThreadID;
     }
+    interrupts_set(enabled);
+    return THREAD_INVALID;
 }
  
 /* when the 'all' parameter is 1, wakeup all threads waiting in the queue.
@@ -443,38 +447,29 @@ thread_sleep(struct wait_queue *queue)
 int
 thread_wakeup(struct wait_queue *queue, int all)
 {
-    interrupts_off();
-    
-    if (queue == NULL){
-        interrupts_on();
+    int enabled = interrupts_off();
+    if (queue == NULL || queue->waitHead == NULL){
+        interrupts_set(enabled);
         return 0;
     }
- 
-    Thread * head = queue->waitHead;
-    if (all == 0){
-        queue->waitHead = NULL;
-        queue->waitHead = head->nextThread;
+    else if (all == 0){
+        queue->size = queue->size - 1;
+        Thread * head = queue->waitHead;
+        queue->waitHead = queue->waitHead->nextThread;
         head->nextThread = NULL;
-        queue->size -= 1;
         insertReady(head);
-        interrupts_on();
+        interrupts_set(enabled);
         return 1;
     }
     else if (all == 1){
         int size = queue->size;
-        Thread * nextPtr = NULL;
-        while (head != NULL){
-            nextPtr = head->nextThread;
-            head->nextThread = NULL;
-            insertReady(head);
-            head = nextPtr;
-        }
+        insertReady(queue->waitHead);
         queue->waitHead = NULL;
         queue->size = 0;
-        interrupts_on();
+        interrupts_set(enabled);
         return size;
     }
-    interrupts_on();
+    interrupts_set(enabled);
     return 0;
 }
  
@@ -482,15 +477,15 @@ thread_wakeup(struct wait_queue *queue, int all)
 Tid
 thread_wait(Tid tid)
 {
-    interrupts_off();
+    int enabled = interrupts_off();
     if (tid == runningThread->id || threadTracker[tid] == NULL || tid < 0 || tid >= THREAD_MAX_THREADS){
-        interrupts_on();
+        interrupts_set(enabled);
         return THREAD_INVALID;
     }
     else {
-        thread_sleep(threadTracker[tid]->wq);
+        thread_sleep(&wq[tid]);
         exterminate();
-        interrupts_on();
+        interrupts_set(enabled);
         return tid;
     }
 }
@@ -504,7 +499,7 @@ struct lock {
 struct lock *
 lock_create()
 {
-    struct lock *lock;
+    struct lock * lock;
  
     lock = malloc(sizeof(struct lock));
     assert(lock);
@@ -527,22 +522,22 @@ void
 lock_acquire(struct lock *lock)
 {
     assert(lock != NULL);
-    interrupts_off();
+    int enabled = interrupts_off();
 	while(lock->locked == 1){
 		thread_sleep(lock->queue);
 	}
     lock->locked = 1;
-    interrupts_on();
+    interrupts_set(enabled);
 }
  
 void
 lock_release(struct lock *lock)
 {
     assert(lock != NULL);
-    interrupts_off();
+    int enabled = interrupts_off();
     lock->locked = 0;
 	thread_wakeup(lock->queue, 1);
-    interrupts_on();
+    interrupts_set(enabled);
 }
  
 struct cv {
