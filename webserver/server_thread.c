@@ -118,14 +118,14 @@ server_request(struct server *sv, int connfd)
 		/*  Save the relevant info in a buffer and have one of the
 		 *  worker threads do the work. */
 		pthread_mutex_lock(sv->lock);
-		while ((sv->in - sv->out + sv->max_requests) % (sv->max_requests) == (sv->max_requests - 1)) {
+		while ((sv->in - sv->out + sv->max_requests) % sv->max_requests == (sv->max_requests - 1)) {
 			pthread_cond_wait(sv->full, sv->lock);
 		} //full
 		sv->buffer[sv->in] = connfd;
 		//if (sv->in == sv->out){
 			pthread_cond_broadcast(sv->empty);
 		//}
-		sv->in = (sv->in + 1) % (sv->max_requests);
+		sv->in = (sv->in + 1) % sv->max_requests;
 		pthread_mutex_unlock(sv->lock);
 	}
 }
@@ -144,7 +144,7 @@ void server_response(struct server * sv){
 		//if ((sv->in - sv->out + sv->max_requests) % (sv->max_requests) == (sv->max_requests - 1)){
 			pthread_cond_broadcast(sv->full);
 		//}
-		sv->out = (sv->out + 1) % (sv->max_requests);
+		sv->out = (sv->out + 1) % sv->max_requests;
 		pthread_mutex_unlock(sv->lock);
 		do_server_request(sv, connfd);
 	}
