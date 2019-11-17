@@ -1,17 +1,19 @@
 cc -MM *.c > .depend
-cc -g -Wall -Werror    hi.c -lm  -o hi
-cc -g -Wall -Werror    hello.c -lm  -o hello
-cc -g -Wall -Werror    words.c -lm  -o words
-cc -g -Wall -Werror    fact.c -lm  -o fact
-cc -g -Wall -Werror   -c -o point.o point.c
-cc -g -Wall -Werror    test_point.c point.o -lm  -o test_point
-cc -g -Wall -Werror   -c -o wc.o wc.c
-cc -g -Wall -Werror    test_wc.c wc.o -lm  -o test_wc
-cc -g -Wall -Werror   -c -o cpr.o cpr.c
-cc   cpr.o -lm  -o cpr
-Running: /cad2/ece344f/tester/scripts/lab1-01-warmup.py 
-warmup test
-Mark for warmup test is 40 out of 40
+cc -g -Wall -Werror   -c -o server.o server.c
+cc -g -Wall -Werror   -c -o server_thread.o server_thread.c
+cc -g -Wall -Werror   -c -o request.o request.c
+cc -g -Wall -Werror   -c -o common.o common.c
+cc   server.o server_thread.o request.o common.o -lm -lpthread -lpopt  -o server
+cc -g -Wall -Werror   -c -o client_simple.o client_simple.c
+cc   client_simple.o common.o -lm -lpthread -lpopt  -o client_simple
+cc -g -Wall -Werror   -c -o client.o client.c
+cc   client.o common.o -lm -lpthread -lpopt  -o client
+cc -g -Wall -Werror   -c -o fileset.o fileset.c
+cc   fileset.o common.o -lm -lpthread -lpopt  -o fileset
+Running: /cad2/ece344f/tester/scripts/lab5-01-webserver.py 
+webserver test
+starting server at port 31566
+Mark for webserver test is 16 out of 16
 PASS
 
-You have received 40 marks out of a total of 40 marks.
+You have received 16 marks out of a total of 16 marks.

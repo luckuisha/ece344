@@ -1,0 +1,12 @@
+{
+    "files.associations": {
+        "stdlib.h": "c",
+        "ucontext.h": "c",
+        "thread.h": "c",
+        "interrupt.h": "c",
+        "thread": "c",
+        "stdbool.h": "c",
+        "common.h": "c",
+        "server_thread.h": "c"
+    }
+}
